@@ -4,7 +4,7 @@ from preprocessing import preprocess_input
 
 st.set_page_config(page_title="LBW Risk Prediction", layout="centered")
 
-model = joblib.load("xgb_model.pkl")
+model = joblib.load(ARTIFACTS_DIR / "xgb_model.pkl")
 
 st.title("Low Birth Weight Risk Prediction")
 
