@@ -1,10 +1,13 @@
-import numpy as np
+
 import json
+from pathlib import Path
 
 # -------------------------------------------------
 # Load frozen feature order
 # -------------------------------------------------
-with open("features.json", "r") as f:
+ARTIFACTS_DIR = Path(__file__).parent / "artifacts"
+
+with open(ARTIFACTS_DIR / "features.json", "r") as f:
     FEATURE_ORDER = json.load(f)
 
 # -------------------------------------------------
