@@ -1,5 +1,4 @@
 import streamlit as st
-import joblib
 from pathlib import Path
 from preprocessing import preprocess_input
 
