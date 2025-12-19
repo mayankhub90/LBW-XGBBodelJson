@@ -128,4 +128,4 @@ if submitted:
 
     prob = float(model.predict(dmat)[0])
 
-    st.success(f"LBW Risk Probability: **{prob:.2%}**")
+    st.success(f"LBW Risk Probability: **{prob:.3%}**")
