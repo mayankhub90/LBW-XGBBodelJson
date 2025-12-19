@@ -1,99 +1,131 @@
-# app.py
 import streamlit as st
 import json
 import pandas as pd
-import numpy as np
 import xgboost as xgb
-import shap
 
 from preprocessing import preprocess_payload
 
-st.set_page_config(
-    page_title="LBW Risk Predictor",
-    layout="wide"
-)
+st.set_page_config(page_title="LBW Risk Assessment", layout="wide")
 
 # -------------------------------
 # Load artifacts
 # -------------------------------
 @st.cache_resource
 def load_artifacts():
-    with open("artifacts/features.json", "r") as f:
+    with open("artifacts/features.json") as f:
         FEATURES = json.load(f)
 
     booster = xgb.Booster()
     booster.load_model("artifacts/xgb_model.json")
 
-    background = pd.read_csv("artifacts/background.csv")
+    return booster, FEATURES
 
-    return booster, FEATURES, background
-
-booster, FEATURES, BACKGROUND = load_artifacts()
-
-st.title("🤰 Low Birth Weight (LBW) Risk Predictor")
+model, FEATURES = load_artifacts()
 
 # -------------------------------
-# INPUT FORM (baseline subset)
+# UI
 # -------------------------------
+st.title("🤰 Low Birth Weight (LBW) Risk Assessment")
+
+beneficiary_name = st.text_input("Beneficiary Name (for record only)")
+
 with st.form("lbw_form"):
+    st.subheader("👩 Background")
 
-    st.subheader("Beneficiary Background")
+    c1, c2, c3 = st.columns(3)
+    age = c1.number_input("Beneficiary age", 15, 45, 25)
+    living_children = c2.number_input("Number of living child at now", 0, 6, 0)
+    parity = c3.number_input("Child order / parity", living_children + 1, 10, living_children + 1)
 
-    age = st.number_input("Beneficiary age", 15, 45, 25)
-    hb = st.number_input("Haemoglobin (g/dL)", 4.0, 16.0, 11.0)
+    month_conception = st.selectbox(
+        "Month of Conception",
+        ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+    )
+    month_map = {m: i+1 for i,m in enumerate(["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"])}
 
-    living = st.number_input("Number of living children", 0, 6, 0)
-    miscarriages = st.number_input("Previous miscarriages / abortions", 0, 6, 0)
+    st.subheader("🩺 Clinical & Anthropometry")
+    height = st.number_input("Height (cm)", 130, 200, 155)
+    weight_pw2 = st.number_input("Weight PW2 (kg)", 30.0, 90.0, 50.0)
+    hb = st.number_input("Hemoglobin (g/dL)", 4.0, 16.0, 11.0)
+    anc = st.number_input("No of ANCs completed", 0, 4, 2)
 
-    parity = living + miscarriages + 1
-    st.info(f"Calculated parity: {parity}")
+    st.subheader("🥗 Nutrition")
+    ifa = st.number_input("IFA tablets (last month)", 0, 120, 30)
+    calcium = st.number_input("Calcium tablets (last month)", 0, 120, 30)
+    food_group = st.selectbox("Food Groups Category", [1,2,3,4,5])
 
-    tobacco = st.selectbox("Consumes tobacco", ["No", "Yes"])
-    alcohol = st.selectbox("Consumes alcohol", ["No", "Yes"])
+    st.subheader("🏠 Household")
+    toilet = st.selectbox("Toilet type", [
+        "Improved toilet",
+        "Pit latrine (basic)",
+        "Unimproved / unknown",
+        "No facility / open defecation"
+    ])
 
-    submit = st.form_submit_button("🔍 Predict LBW Risk")
+    water = st.selectbox("Water source", [
+        "Piped supply (home/yard/stand)",
+        "Groundwater – handpump/borewell",
+        "Protected well",
+        "Surface/Unprotected source",
+        "Delivered / other"
+    ])
+
+    education = st.selectbox("Education level", [
+        "No schooling",
+        "Primary (1–5)",
+        "Middle (6–8)",
+        "Secondary (9–12)",
+        "Graduate & above"
+    ])
+
+    social_media = st.selectbox("Social media exposure", [0,1])
+
+    wm = st.checkbox("Has Washing Machine")
+    ac = st.checkbox("Has AC / Cooler")
+
+    submitted = st.form_submit_button("🔍 Predict Risk")
 
 # -------------------------------
-# PREDICTION
+# Prediction
 # -------------------------------
-if submit:
+if submitted:
     payload = {
         "Beneficiary age": age,
-        "measured_HB": hb,
-        "Number of living child at now": living,
+        "Hemoglobin": hb,
         "Child order/parity": parity,
-        "consume_tobacco": 1 if tobacco == "Yes" else 0,
-        "consume_alcohol": 1 if alcohol == "Yes" else 0,
+        "Number of living child at now": living_children,
+        "MonthConception": month_map[month_conception],
+        "Height_cm": height,
+        "Weight_PW2": weight_pw2,
+        "No of ANCs completed": anc,
+        "IFA_tablets": ifa,
+        "Calcium_tablets": calcium,
+        "Food_Groups_Category": food_group,
+        "toilet_type_clean": toilet,
+        "water_source_clean": water,
+        "education_clean": education,
+        "Social_Media_Category": social_media,
+        "Has_Washing_Machine": int(wm),
+        "Has_AC_or_Cooler": int(ac),
+        "consume_tobacco": 0,
+        "Status of current chewing of tobacco": 0,
+        "consume_alcohol": 0,
+        "Registered for cash transfer scheme: JSY": 0,
+        "Registered for cash transfer scheme: RAJHSRI": 0,
+        "PMMVY-Number of installment received": 0,
+        "JSY-Number of installment received": 0,
+        "RegistrationBucket": 0,
+        "counselling_gap_days": 0,
+        "ANCBucket": 0,
+        "LMPtoINST1": 0,
+        "LMPtoINST2": 0,
+        "LMPtoINST3": 0,
+        "Service received during last ANC: TT Injection given": 0
     }
 
-    # Preprocess
     X = preprocess_payload(payload, FEATURES)
+    dmat = xgb.DMatrix(X)
 
-    # Safety check
-    if list(X.columns) != FEATURES:
-        st.error("Feature mismatch between UI and model")
-        st.stop()
+    prob = float(model.predict(dmat)[0])
 
-    # Predict
-    dmat = xgb.DMatrix(X, feature_names=FEATURES)
-    prob = float(booster.predict(dmat)[0])
-
-    st.metric("LBW Risk Probability", f"{prob:.2%}")
-
-    # ---------------------------
-    # SHAP (Top drivers)
-    # ---------------------------
-    explainer = shap.TreeExplainer(booster)
-    shap_vals = explainer.shap_values(X)
-
-    shap_df = (
-        pd.DataFrame({
-            "Feature": FEATURES,
-            "Impact": shap_vals[0]
-        })
-        .sort_values("Impact", key=abs, ascending=False)
-        .head(10)
-    )
-
-    st.subheader("Top Risk Drivers")
-    st.bar_chart(shap_df.set_index("Feature"))
+    st.success(f"LBW Risk Probability: **{prob:.2%}**")
