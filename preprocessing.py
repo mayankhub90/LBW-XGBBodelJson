@@ -1,41 +1,86 @@
-import pandas as pd
 import numpy as np
+import json
 
-def preprocess_payload(raw: dict, FEATURES: list) -> pd.DataFrame:
-    df = pd.DataFrame([raw])
+# -------------------------------------------------
+# Load frozen feature order
+# -------------------------------------------------
+with open("features.json", "r") as f:
+    FEATURE_ORDER = json.load(f)
 
-    # -------------------------------
-    # Derived variables
-    # -------------------------------
+# -------------------------------------------------
+# Bucket logic (must match notebook)
+# -------------------------------------------------
+def anc_bucket(anc):
+    if anc <= 1:
+        return 0
+    elif anc <= 3:
+        return 1
+    else:
+        return 2
 
-    # Hemoglobin → risk bin
-    hb = df["Hemoglobin"].iloc[0]
-    df["measured_HB_risk_bin"] = 0 if hb >= 11 else 1
+def registration_bucket(days):
+    if days <= 90:
+        return 0
+    elif days <= 180:
+        return 1
+    else:
+        return 2
 
-    # BMI from height + weight PW2
-    height_m = df["Height_cm"].iloc[0] / 100
-    df["BMI_PW2_Prog"] = df["Weight_PW2"].iloc[0] / (height_m ** 2)
+# -------------------------------------------------
+# Main preprocessing function
+# -------------------------------------------------
+def preprocess_input(raw):
+    f = {}
 
-    # Parity validation
-    if df["Child order/parity"].iloc[0] <= df["Number of living child at now"].iloc[0]:
-        raise ValueError("Parity must be greater than living children")
+    # Core demographics
+    f["Beneficiary age"] = raw["age"]
+    f["measured_HB_risk_bin"] = raw["hb_risk"]
+    f["Child order/parity"] = raw["parity"]
+    f["Number of living child at now"] = raw["living_children"]
+    f["MonthConception"] = raw["month_conception"]
 
-    # Log transforms
-    df["No. of IFA tablets received/procured in last one month_log1p"] = \
-        np.log1p(df["IFA_tablets"].iloc[0])
+    # ANC + BMI progression
+    anc = raw["anc"]
+    f["No of ANCs completed"] = anc
+    f["BMI_PW1_Prog"] = raw["bmi_pw1"] if anc >= 1 else 0
+    f["BMI_PW2_Prog"] = raw["bmi_pw2"] if anc >= 2 else 0
+    f["BMI_PW3_Prog"] = raw["bmi_pw3"] if anc >= 3 else 0
+    f["BMI_PW4_Prog"] = raw["bmi_pw4"] if anc >= 4 else 0
+    f["ANCBucket"] = anc_bucket(anc)
 
-    df["No. of calcium tablets consumed in last one month_log1p"] = \
-        np.log1p(df["Calcium_tablets"].iloc[0])
+    # Registration & counselling
+    f["RegistrationBucket"] = registration_bucket(raw["reg_days"])
+    f["counselling_gap_days"] = raw["counselling_gap"]
 
-    df["Household_Assets_Score_log1p"] = np.log1p(
-        df["Has_Washing_Machine"].iloc[0] +
-        df["Has_AC_or_Cooler"].iloc[0] +
-        df["Social_Media_Category"].iloc[0]
-    )
+    # LMP to instalment gaps
+    f["LMPtoINST1"] = raw["lmp1"]
+    f["LMPtoINST2"] = raw["lmp2"]
+    f["LMPtoINST3"] = raw["lmp3"]
 
-    # -------------------------------
-    # Final alignment
-    # -------------------------------
-    df_final = df.reindex(columns=FEATURES, fill_value=0)
+    # Behavioural
+    f["consume_tobacco"] = raw["tobacco"]
+    f["Status of current chewing of tobacco"] = raw["chew"]
+    f["consume_alcohol"] = raw["alcohol"]
 
-    return df_final
+    # Service & supplements
+    f["Service received during last ANC: TT Injection given"] = raw["tt"]
+    f["No. of IFA tablets received/procured in last one month_log1p"] = raw["ifa"]
+    f["No. of calcium tablets consumed in last one month_log1p"] = raw["calcium"]
+
+    # Household & social
+    f["Food_Groups_Category"] = raw["food"]
+    f["Household_Assets_Score_log1p"] = raw["assets"]
+    f["toilet_type_clean"] = raw["toilet"]
+    f["water_source_clean"] = raw["water"]
+    f["education_clean"] = raw["education"]
+    f["Social_Media_Category"] = raw["social"]
+
+    # Schemes
+    f["Registered for cash transfer scheme: JSY"] = raw["jsy"]
+    f["Registered for cash transfer scheme: RAJHSRI"] = raw["rajhsri"]
+    f["PMMVY-Number of installment received"] = raw["pmmvy_inst"]
+    f["JSY-Number of installment received"] = raw["jsy_inst"]
+
+    # Final ordered array
+    X = np.array([f[col] for col in FEATURE_ORDER], dtype=float).reshape(1, -1)
+    return X
