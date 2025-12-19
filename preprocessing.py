@@ -1,52 +1,41 @@
-# preprocessing.py
 import pandas as pd
 import numpy as np
 
-def preprocess_payload(payload: dict, FEATURES: list) -> pd.DataFrame:
-    """
-    Converts raw UI payload into model-ready dataframe
-    Ensures all FEATURES exist and are in correct order
-    """
+def preprocess_payload(raw: dict, FEATURES: list) -> pd.DataFrame:
+    df = pd.DataFrame([raw])
 
-    # Create base DF
-    df = pd.DataFrame([payload])
+    # -------------------------------
+    # Derived variables
+    # -------------------------------
 
-    # -----------------------------
-    # Derived features
-    # -----------------------------
+    # Hemoglobin → risk bin
+    hb = df["Hemoglobin"].iloc[0]
+    df["measured_HB_risk_bin"] = 0 if hb >= 11 else 1
 
-    # Hemoglobin risk bin
-    if "measured_HB" in df.columns:
-        df["measured_HB_risk_bin"] = pd.cut(
-            df["measured_HB"],
-            bins=[-np.inf, 6, 8, 11, np.inf],
-            labels=[0, 1, 2, 3]   # numeric bins as used in model
-        ).astype(float)
+    # BMI from height + weight PW2
+    height_m = df["Height_cm"].iloc[0] / 100
+    df["BMI_PW2_Prog"] = df["Weight_PW2"].iloc[0] / (height_m ** 2)
 
-    # Log1p transforms (if raw values present)
-    log_features = {
-        "No. of IFA tablets received/procured in last one month":
-            "No. of IFA tablets received/procured in last one month_log1p",
-        "No. of calcium tablets consumed in last one month":
-            "No. of calcium tablets consumed in last one month_log1p",
-        "Household_Assets_Score":
-            "Household_Assets_Score_log1p"
-    }
+    # Parity validation
+    if df["Child order/parity"].iloc[0] <= df["Number of living child at now"].iloc[0]:
+        raise ValueError("Parity must be greater than living children")
 
-    for raw_col, log_col in log_features.items():
-        if raw_col in df.columns:
-            df[log_col] = np.log1p(df[raw_col])
+    # Log transforms
+    df["No. of IFA tablets received/procured in last one month_log1p"] = \
+        np.log1p(df["IFA_tablets"].iloc[0])
 
-    # -----------------------------
-    # GUARANTEE feature completeness
-    # -----------------------------
-    for f in FEATURES:
-        if f not in df.columns:
-            df[f] = 0.0
+    df["No. of calcium tablets consumed in last one month_log1p"] = \
+        np.log1p(df["Calcium_tablets"].iloc[0])
 
-    # -----------------------------
-    # Final strict ordering
-    # -----------------------------
-    df_final = df[FEATURES].astype(float)
+    df["Household_Assets_Score_log1p"] = np.log1p(
+        df["Has_Washing_Machine"].iloc[0] +
+        df["Has_AC_or_Cooler"].iloc[0] +
+        df["Social_Media_Category"].iloc[0]
+    )
+
+    # -------------------------------
+    # Final alignment
+    # -------------------------------
+    df_final = df.reindex(columns=FEATURES, fill_value=0)
 
     return df_final
